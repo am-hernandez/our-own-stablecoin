@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
 /**
  * @title MockV3Aggregator
  * @notice Based on the FluxAggregator contract
@@ -58,11 +60,11 @@ contract MockV3Aggregator {
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
     {
         return (
-            uint80(latestRound),
+            SafeCast.toUint80(latestRound),
             getAnswer[latestRound],
             getStartedAt[latestRound],
             getTimestamp[latestRound],
-            uint80(latestRound)
+            SafeCast.toUint80(latestRound)
         );
     }
 
