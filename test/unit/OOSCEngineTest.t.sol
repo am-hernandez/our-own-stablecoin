@@ -19,10 +19,11 @@ contract OOSCEngineTest is Test {
     address public USER = makeAddr("user");
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
     uint256 public constant STARTING_ERC20_BALANCE = 10 ether;
+
     function setUp() public {
         deployer = new DeployOOSC();
         (oosc, ooscEngine, config) = deployer.run();
-        (ethUsdPriceFeed, , weth, , ) = config.activeNetworkConfig();
+        (ethUsdPriceFeed,, weth,,) = config.activeNetworkConfig();
         ERC20Mock(weth).mint(USER, STARTING_ERC20_BALANCE);
     }
 
@@ -31,11 +32,11 @@ contract OOSCEngineTest is Test {
     //
 
     function test_getUsdValue() public view {
-      uint256 ethAmount = 15e18;
-      // 15e18 *2000/ETH = 30000e18
-      uint256 expectedUsd = 30000e18;
-      uint256 actualUsd = ooscEngine.getTokenUsdValue(weth, ethAmount);
-      assertEq(actualUsd, expectedUsd);
+        uint256 ethAmount = 15e18;
+        // 15e18 *2000/ETH = 30000e18
+        uint256 expectedUsd = 30000e18;
+        uint256 actualUsd = ooscEngine.getTokenUsdValue(weth, ethAmount);
+        assertEq(actualUsd, expectedUsd);
     }
 
     //
@@ -43,13 +44,13 @@ contract OOSCEngineTest is Test {
     //
 
     function test_revertsIfCollateralZero() public {
-      vm.startPrank(USER);
+        vm.startPrank(USER);
 
-      ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
 
-      vm.expectRevert(OOSCEngine.OOSCEngine_MustBeMoreThanZero.selector);
-      ooscEngine.depositCollateral(weth, 0);
-    
-      vm.stopPrank();
+        vm.expectRevert(OOSCEngine.OOSCEngine_MustBeMoreThanZero.selector);
+        ooscEngine.depositCollateral(weth, 0);
+
+        vm.stopPrank();
     }
 }
