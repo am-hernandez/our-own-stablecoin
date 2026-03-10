@@ -23,10 +23,13 @@ contract OOSCEngine is ReentrancyGuard {
     //
 
     error OOSCEngine_MustBeMoreThanZero();
+    error OOSCEngine_OOSCAddressCannotBeZeroAddress();
     error OOSCEngine_TokenAddressesAndPriceFeedAddressesLengthMismatch();
     error OOSCEngine_TokenNotAllowed();
     error OOSCEngine_TransferFailed();
     error OOSCEngine_BreaksHealthFactor(uint256 userHealthFactor);
+    error OOSCEngine_HealthFactorOk();
+    error OOSCEngine_HealthFactorNotImproved();
     error OOSCEngine_InvalidPrice();
     error OOSCEngine_MintFailed();
 
@@ -36,9 +39,11 @@ contract OOSCEngine is ReentrancyGuard {
 
     uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
     uint256 private constant PRECISION = 1e18;
-    uint256 private constant LIQUIDATION_THRESHOLD = 50; // must be at least 200% collateralized
+    uint256 private constant LIQUIDATION_BONUS = 10; // 10% bonus
     uint256 private constant LIQUIDATION_PRECISION = 100;
+    uint256 private constant LIQUIDATION_THRESHOLD = 50; // 200% collateralized
     uint256 private constant MIN_HEALTH_FACTOR = 1;
+
     mapping(address token => address priceFeed) private s_priceFeeds;
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited;
     mapping(address user => uint256 amountOoscMinted) private s_ooscMinted;
@@ -51,13 +56,16 @@ contract OOSCEngine is ReentrancyGuard {
     //
 
     event CollateralDeposited(address indexed user, address indexed token, uint256 amount);
+    event CollateralRedeemed(
+        address indexed redeemedFrom, address indexed redeemedTo, address indexed token, uint256 amount
+    );
 
     //
     // MODIFIERS
     //
 
     modifier isAllowedToken(address token) {
-        if (token == address(0)) {
+        if (s_priceFeeds[token] == address(0)) {
             revert OOSCEngine_TokenNotAllowed();
         }
         _;
@@ -75,6 +83,9 @@ contract OOSCEngine is ReentrancyGuard {
     //
 
     constructor(address[] memory tokenAddresses, address[] memory priceFeedAddresses, address ooscAddress) {
+        if (ooscAddress == address(0)) {
+            revert OOSCEngine_OOSCAddressCannotBeZeroAddress();
+        }
         if (tokenAddresses.length != priceFeedAddresses.length) {
             revert OOSCEngine_TokenAddressesAndPriceFeedAddressesLengthMismatch();
         }
@@ -88,10 +99,8 @@ contract OOSCEngine is ReentrancyGuard {
     }
 
     //
-    // EXTERNAL FUNCTIONS
+    // EXTERNAL & PUBLIC FUNCTIONS
     //
-
-    function depositCollateralAndMintOosc() external {}
 
     /*
      * @param tokenCollateralAddress The address of the token collateral to
@@ -99,7 +108,7 @@ contract OOSCEngine is ReentrancyGuard {
      * @param amountCollateral The amount of collateral to deposit
      */
     function depositCollateral(address tokenCollateralAddress, uint256 amountCollateral)
-        external
+        public
         moreThanZero(amountCollateral)
         isAllowedToken(tokenCollateralAddress)
         nonReentrant
@@ -114,15 +123,54 @@ contract OOSCEngine is ReentrancyGuard {
         }
     }
 
-    function redeemCollateralForOosc() external {}
+    /*
+     * @param tokenCollateralAddress The address of the token collateral to deposit
+     * @param amountCollateral The amount of collateral to deposit
+     * @param amountOoscToMint The amount of OOSC to mint
+     * @notice This function will deposit the collateral and mint the OOSC in a single transaction
+     */
+    function depositCollateralAndMintOosc(
+        address tokenCollateralAddress,
+        uint256 amountCollateral,
+        uint256 amountOoscToMint
+    ) external {
+        depositCollateral(tokenCollateralAddress, amountCollateral);
+        mintOosc(amountOoscToMint);
+    }
 
-    function redeemCollateral() external {}
+    /*
+     * @notice This function will burn the OOSC and redeem the collateral in a single transaction
+     * @notice Health factor must be greater than 1 after collateral pulled
+     * @param tokenCollateralAddress The address of the token collateral to redeem
+     * @param amountCollateral The amount of collateral to redeem
+     * @param amountOoscToBurn The amount of OOSC to burn/
+     */
+    function redeemCollateralForOosc(address tokenCollateralAddress, uint256 amountCollateral, uint256 amountOoscToBurn)
+        public
+        moreThanZero(amountOoscToBurn)
+    {
+        burnOosc(amountOoscToBurn);
+        redeemCollateral(tokenCollateralAddress, amountCollateral);
+    }
+
+    /*
+     * @notice This function will redeem the collateral and burn the OOSC in a single transaction
+     * @notice Health factor must be greater than 1 after collateral pulled
+     */
+    function redeemCollateral(address tokenCollateralAddress, uint256 amountCollateral)
+        public
+        moreThanZero(amountCollateral)
+        nonReentrant
+    {
+        _redeemCollateral(msg.sender, msg.sender, tokenCollateralAddress, amountCollateral);
+        _revertIfHealthFactorBroken(msg.sender);
+    }
 
     /*
      * @param amountOoscToMint The amount of OOSC to mint
      * @notice The caller must have enough collateral deposited to mint the OOSC
      */
-    function mintOosc(uint256 amountOoscToMint) external moreThanZero(amountOoscToMint) nonReentrant {
+    function mintOosc(uint256 amountOoscToMint) public moreThanZero(amountOoscToMint) nonReentrant {
         s_ooscMinted[msg.sender] += amountOoscToMint;
 
         // if user attempts to mint more than the total collateral value, revert
@@ -134,9 +182,60 @@ contract OOSCEngine is ReentrancyGuard {
         }
     }
 
-    function burnOosc() external {}
+    function burnOosc(uint256 amountOoscToBurn) public moreThanZero(amountOoscToBurn) {
+        _burnOosc(amountOoscToBurn, msg.sender, msg.sender);
+        _revertIfHealthFactorBroken(msg.sender);
+    }
 
-    function liquidate() external {}
+    /*
+     * @param user The address of the user to liquidate, their health factor must be below the MIN_HEALTH_FACTOR
+     * @param tokenCollateralAddress The address of the token collateral to liquidate
+     * @param amountCollateral The amount of collateral to liquidate
+     * @param amountOoscToBurn The amount of OOSC to burn/
+     * @notice This function will liquidate the user's collateral if their health factor is less than 1
+     * @notice The caller must have enough collateral deposited to liquidate the user
+     * @notice Caller can partially liquidate the user's collateral
+     * @notice Caller will receive a liquidationbonus for liquidating the user
+     * @notice Function assumes overcollateralized user by 200%
+     */
+    function liquidate(address collateralToken, address user, uint256 debtToCover)
+        external
+        moreThanZero(debtToCover)
+        nonReentrant
+    {
+        // check health factor of the user
+        uint256 startingUserHealthFactor = _healthFactor(user);
+        if (startingUserHealthFactor >= MIN_HEALTH_FACTOR) {
+            revert OOSCEngine_HealthFactorOk();
+        }
+        // want to burn their OOSC
+        // and take their collateralToken
+        // ex $140 ETH, $100 OOSC
+        // debt to cover = $100
+        uint256 tokenAmountFromDebtCovered = getTokenAmountFromUsd(collateralToken, debtToCover);
+
+        // and give them a 10% bonus
+        // so give the liquidator 110$ USD of WETH for 100 OOSC
+
+        // 0.05 ETH * 0.1 = 0.005 ETH, getting 0.055 ETH
+        uint256 bonusCollateral = (tokenAmountFromDebtCovered * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
+
+        uint256 totalCollateralToRedeem = tokenAmountFromDebtCovered + bonusCollateral;
+
+        _redeemCollateral(user, msg.sender, collateralToken, totalCollateralToRedeem);
+
+        // burn OOSC
+        _burnOosc(debtToCover, user, msg.sender);
+
+        // check if health factor is improved for user
+        uint256 endingUserHealthFactor = _healthFactor(user);
+        if (endingUserHealthFactor <= MIN_HEALTH_FACTOR) {
+            revert OOSCEngine_HealthFactorNotImproved();
+        }
+
+        // check if health factor is broken for liquidator as well
+        _revertIfHealthFactorBroken(msg.sender);
+    }
 
     function getHealthFactor() external view {}
 
@@ -145,12 +244,31 @@ contract OOSCEngine is ReentrancyGuard {
     //
 
     /*
+     * @notice Burns the OOSC from the address of the user
+     * @param amountOoscToBurn The amount of OOSC to burn
+     * @param onBehalfOf The address of the user to burn the OOSC on behalf of
+     * @param ooscFrom The address of the OOSC to burn from
+     * @dev Low-level internal function, do not call unless the function
+     * calling it is checking for health factors being broken
+     */
+    function _burnOosc(uint256 amountOoscToBurn, address onBehalfOf, address ooscFrom) private {
+        s_ooscMinted[onBehalfOf] -= amountOoscToBurn;
+
+        bool success = I_OOSC.transferFrom(ooscFrom, address(this), amountOoscToBurn);
+        if (!success) {
+            revert OOSCEngine_TransferFailed();
+        }
+
+        I_OOSC.burn(amountOoscToBurn);
+    }
+
+    /*
      * @notice Returns the total OOSC minted and the collateral value in USD
      * @param user The address of the user to get the account information of
      * @return totalOoscMinted The total OOSC minted by the user
      * @return collateralValueInUsd The collateral value in USD
     */
-    function getAccountInformation(address user)
+    function _getAccountInformation(address user)
         private
         view
         returns (uint256 totalOoscMinted, uint256 collateralValueInUsd)
@@ -165,17 +283,30 @@ contract OOSCEngine is ReentrancyGuard {
      * @param user The address of the user to check the health factor of
      * @return The health factor of the user
      */
-    function _healthFactor(address user) internal view returns (uint256) {
+    function _healthFactor(address user) private view returns (uint256) {
         // total OOSC minted
         // total collateral VALUE
 
-        (uint256 totalOoscMinted, uint256 collateralValueInUsd) = getAccountInformation(user);
+        (uint256 totalOoscMinted, uint256 collateralValueInUsd) = _getAccountInformation(user);
 
         uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
 
         // ex. 1000 ETH / 100 OOSC
         // 1000 * 50 = 50000 / 100 = (500 / 100) > 1
         return (collateralAdjustedForThreshold * PRECISION) / totalOoscMinted;
+    }
+
+    function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 amountCollateral)
+        private
+    {
+        s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral;
+
+        emit CollateralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
+
+        bool success = IERC20(tokenCollateralAddress).transfer(to, amountCollateral);
+        if (!success) {
+            revert OOSCEngine_TransferFailed();
+        }
     }
 
     /*
@@ -192,8 +323,14 @@ contract OOSCEngine is ReentrancyGuard {
     }
 
     //
-    // PUBLIC FUNCTIONS
+    // PUBLIC & EXTERNAL VIEWFUNCTIONS
     //
+
+    function getTokenAmountFromUsd(address token, uint256 usdAmountInWei) public view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
+        (, int256 price,,,) = priceFeed.latestRoundData();
+        return (usdAmountInWei * PRECISION) / (SafeCast.toUint256(price) * ADDITIONAL_FEED_PRECISION);
+    }
 
     function getAccountCollateralValue(address user) public view returns (uint256 totalCollateralValueInUsd) {
         // loop through each collateral token,
@@ -222,5 +359,13 @@ contract OOSCEngine is ReentrancyGuard {
         // ex. 1 ETH = $1000
         // The returned value from CL will be 1000 * 1e8 (8 decimals for ETH)
         return ((safePrice * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
+    }
+
+    function getAccountInformation(address user)
+        external
+        view
+        returns (uint256 totalOoscMinted, uint256 collateralValueInUsd)
+    {
+        (totalOoscMinted, collateralValueInUsd) = _getAccountInformation(user);
     }
 }
