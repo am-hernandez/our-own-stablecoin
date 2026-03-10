@@ -8,6 +8,7 @@ import {OurOwnStablecoin} from "../../src/OurOwnStablecoin.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {MaliciousToken} from "../mocks/MaliciousToken.sol";
+import {MaliciousOOSC} from "../mocks/MaliciousOOSC.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {console} from "forge-std/console.sol";
 
@@ -24,6 +25,9 @@ contract OOSCEngineTest is Test {
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
     uint256 public constant STARTING_ERC20_BALANCE = 10 ether;
 
+    address[] public tokenAddresses;
+    address[] public priceFeedAddresses;
+
     function setUp() public {
         deployer = new DeployOOSC();
         (oosc, ooscEngine, config) = deployer.run();
@@ -34,9 +38,6 @@ contract OOSCEngineTest is Test {
     //
     // CONSTRUCTOR TESTS
     //
-
-    address[] public tokenAddresses;
-    address[] public priceFeedAddresses;
 
     function test_constructor_RevertsIfTokenAddressesAndPriceFeedAddressesLengthMismatch() public {
         tokenAddresses.push(weth);
@@ -132,7 +133,6 @@ contract OOSCEngineTest is Test {
 
     function test_depositCollateralAndMintOosc() public {
         uint256 amountOoscToMint = 100 ether;
-        // approve the oosc engine to mint the oosc
         vm.startPrank(USER);
         ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
         ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, amountOoscToMint);
@@ -141,5 +141,56 @@ contract OOSCEngineTest is Test {
         (uint256 totalOoscMinted, uint256 collateralValueInUsd) = ooscEngine.getAccountInformation(USER);
         assertEq(totalOoscMinted, amountOoscToMint);
         assertGt(collateralValueInUsd, totalOoscMinted);
+    }
+
+    //
+    // MINT OOSC TESTS
+    //
+
+    function test_mintOosc() public depositCollateral {
+        uint256 amountOoscToMint = 100 ether;
+        vm.startPrank(USER);
+        ooscEngine.mintOosc(amountOoscToMint);
+        vm.stopPrank();
+
+        (uint256 totalOoscMinted, uint256 collateralValueInUsd) = ooscEngine.getAccountInformation(USER);
+        assertEq(totalOoscMinted, amountOoscToMint);
+        assertGt(collateralValueInUsd, totalOoscMinted);
+    }
+
+    function test_revertsWhenMintAmountIsZero() public depositCollateral {
+        vm.startPrank(USER);
+        vm.expectRevert(OOSCEngine.OOSCEngine_MustBeMoreThanZero.selector);
+        ooscEngine.mintOosc(0);
+        vm.stopPrank();
+    }
+
+    function test_revertsWhenMintWouldBreakHealthFactor() public depositCollateral {
+        // 10 ETH at $2000 = $20k collateral; with 50% threshold, max safe mint ≈ $10k OOSC
+        vm.startPrank(USER);
+        uint256 excessMint = 15_000 ether; // over the ~10k limit
+        vm.expectRevert(
+            abi.encodeWithSelector(OOSCEngine.OOSCEngine_BreaksHealthFactor.selector, 666666666666666666) // 0.666666666666666666 * 1e18
+        );
+        ooscEngine.mintOosc(excessMint);
+        vm.stopPrank();
+    }
+
+    function test_revertsForReentrantWhenMintingOosc() public {
+        tokenAddresses.push(weth);
+        priceFeedAddresses.push(ethUsdPriceFeed);
+
+        MaliciousOOSC maliciousOosc = new MaliciousOOSC();
+        OOSCEngine vulnerableEngine = new OOSCEngine(tokenAddresses, priceFeedAddresses, address(maliciousOosc));
+        maliciousOosc.setEngine(address(vulnerableEngine));
+        maliciousOosc.transferOwnership(address(vulnerableEngine));
+
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(vulnerableEngine), AMOUNT_COLLATERAL);
+        vulnerableEngine.depositCollateral(weth, AMOUNT_COLLATERAL);
+
+        vm.expectRevert(ReentrancyGuard.ReentrancyGuardReentrantCall.selector);
+        vulnerableEngine.mintOosc(100 ether);
+        vm.stopPrank();
     }
 }
