@@ -7,9 +7,10 @@ import {OurOwnStablecoin} from "../src/OurOwnStablecoin.sol";
 import {HelperConfig} from "./HelperConfig.s.sol";
 
 contract DeployOOSC is Script {
-    function run() external returns (OurOwnStablecoin, OOSCEngine) {
+    function run() external returns (OurOwnStablecoin, OOSCEngine, HelperConfig) {
         HelperConfig helperConfig = new HelperConfig();
-        (address wethUsdPriceFeed, address wbtcUsdPriceFeed, address weth, address wbtc, uint256 deployerKey) = helperConfig.activeNetworkConfig();
+        (address wethUsdPriceFeed, address wbtcUsdPriceFeed, address weth, address wbtc, uint256 deployerKey) =
+            helperConfig.activeNetworkConfig();
 
         address[] memory tokenAddresses = new address[](2);
         tokenAddresses[0] = weth;
@@ -28,6 +29,6 @@ contract DeployOOSC is Script {
 
         vm.stopBroadcast();
 
-        return (oosc, ooscEngine);
+        return (oosc, ooscEngine, helperConfig);
     }
 }
