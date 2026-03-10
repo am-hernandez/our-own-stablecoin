@@ -32,6 +32,7 @@ contract OOSCEngine is ReentrancyGuard {
     error OOSCEngine_HealthFactorNotImproved();
     error OOSCEngine_InvalidPrice();
     error OOSCEngine_MintFailed();
+    error OOSCEngine_BurnAmountExceedsBalance();
 
     //
     // STATE VARIABLES
@@ -252,6 +253,10 @@ contract OOSCEngine is ReentrancyGuard {
      * calling it is checking for health factors being broken
      */
     function _burnOosc(uint256 amountOoscToBurn, address onBehalfOf, address ooscFrom) private {
+        if (s_ooscMinted[onBehalfOf] < amountOoscToBurn) {
+            revert OOSCEngine_BurnAmountExceedsBalance();
+        }
+        
         s_ooscMinted[onBehalfOf] -= amountOoscToBurn;
 
         bool success = I_OOSC.transferFrom(ooscFrom, address(this), amountOoscToBurn);

@@ -193,4 +193,44 @@ contract OOSCEngineTest is Test {
         vulnerableEngine.mintOosc(100 ether);
         vm.stopPrank();
     }
+
+    //
+    // BURN OOSC TESTS
+    //
+
+    function test_burnOosc() public {
+        uint256 amountToMint = 100 ether;
+        uint256 amountToBurn = 50 ether;
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, amountToMint);
+        OurOwnStablecoin(oosc).approve(address(ooscEngine), amountToBurn);
+        ooscEngine.burnOosc(amountToBurn);
+        vm.stopPrank();
+
+        (uint256 totalOoscMinted, uint256 collateralValueInUsd) = ooscEngine.getAccountInformation(USER);
+        assertEq(totalOoscMinted, amountToMint - amountToBurn);
+        assertGt(collateralValueInUsd, totalOoscMinted);
+    }
+
+    function test_revertsWhenBurnAmountIsZero() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, 100 ether);
+
+        vm.expectRevert(OOSCEngine.OOSCEngine_MustBeMoreThanZero.selector);
+        ooscEngine.burnOosc(0);
+        vm.stopPrank();
+    }
+
+    function test_revertsWhenBurnAmountExceedsBalance() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, 100 ether);
+        OurOwnStablecoin(oosc).approve(address(ooscEngine), 101 ether);
+
+        vm.expectRevert(OOSCEngine.OOSCEngine_BurnAmountExceedsBalance.selector);
+        ooscEngine.burnOosc(101 ether);
+        vm.stopPrank();
+    }
 }
