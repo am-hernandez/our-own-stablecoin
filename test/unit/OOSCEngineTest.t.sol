@@ -10,6 +10,7 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {MaliciousToken} from "../mocks/MaliciousToken.sol";
 import {MaliciousOOSC} from "../mocks/MaliciousOOSC.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {MockV3Aggregator} from "../mocks/MockV3Aggregator.sol";
 import {console} from "forge-std/console.sol";
 
 contract OOSCEngineTest is Test {
@@ -33,6 +34,10 @@ contract OOSCEngineTest is Test {
         (oosc, ooscEngine, config) = deployer.run();
         (ethUsdPriceFeed,, weth,,) = config.activeNetworkConfig();
         ERC20Mock(weth).mint(USER, STARTING_ERC20_BALANCE);
+    }
+
+    function getWethPriceFromMock() internal view returns (uint256) {
+        return uint256(MockV3Aggregator(ethUsdPriceFeed).latestAnswer());
     }
 
     //
@@ -231,6 +236,61 @@ contract OOSCEngineTest is Test {
 
         vm.expectRevert(OOSCEngine.OOSCEngine_BurnAmountExceedsBalance.selector);
         ooscEngine.burnOosc(101 ether);
+        vm.stopPrank();
+    }
+
+    //
+    // REDEEM COLLATERAL TESTS
+    //
+
+    function test_canRedeemCollateral() public depositCollateral {
+        uint256 amountToRedeem = 5 ether;
+
+        (, uint256 collateralValueInUsdBefore) = ooscEngine.getAccountInformation(USER);
+        uint256 usdValueRedeemed = ooscEngine.getTokenUsdValue(weth, amountToRedeem);
+    
+        vm.startPrank(USER);
+        ooscEngine.redeemCollateral(weth, amountToRedeem);
+        vm.stopPrank();
+
+        (uint256 totalOoscMintedAfter, uint256 collateralValueInUsdAfter) = ooscEngine.getAccountInformation(USER);
+
+        assertEq(totalOoscMintedAfter, 0);
+
+        assertEq(collateralValueInUsdAfter, collateralValueInUsdBefore - usdValueRedeemed);
+    }
+
+    function test_revertsWhenRedeemAmountIsZero() public depositCollateral {
+        vm.startPrank(USER);
+        vm.expectRevert(OOSCEngine.OOSCEngine_MustBeMoreThanZero.selector);
+        ooscEngine.redeemCollateral(weth, 0);
+        vm.stopPrank();
+    }
+
+    function test_revertsWhenNoCollateralToRedeem() public {
+        vm.startPrank(USER);
+        vm.expectRevert(OOSCEngine.OOSCEngine_NoCollateralToRedeem.selector);
+        ooscEngine.redeemCollateral(weth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+    }
+
+    function test_revertsWhenRedeemBreaksHealthFactor() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, 8000 ether);
+        vm.stopPrank();
+
+        uint256 redeemPercent = 90; // 90% of collateral
+        uint256 amountToRedeem = (AMOUNT_COLLATERAL * redeemPercent) / 100;
+
+        console.log("AMOUNT_COLLATERAL", AMOUNT_COLLATERAL);
+        console.log("amountToRedeem", amountToRedeem);
+
+        vm.startPrank(USER);
+        vm.expectRevert(
+            abi.encodeWithSelector(OOSCEngine.OOSCEngine_BreaksHealthFactor.selector, 125000000000000000)
+        );
+        ooscEngine.redeemCollateral(weth, amountToRedeem);
         vm.stopPrank();
     }
 }

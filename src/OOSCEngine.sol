@@ -33,7 +33,8 @@ contract OOSCEngine is ReentrancyGuard {
     error OOSCEngine_InvalidPrice();
     error OOSCEngine_MintFailed();
     error OOSCEngine_BurnAmountExceedsBalance();
-
+    error OOSCEngine_NoCollateralToRedeem();
+    
     //
     // STATE VARIABLES
     //
@@ -256,7 +257,7 @@ contract OOSCEngine is ReentrancyGuard {
         if (s_ooscMinted[onBehalfOf] < amountOoscToBurn) {
             revert OOSCEngine_BurnAmountExceedsBalance();
         }
-        
+
         s_ooscMinted[onBehalfOf] -= amountOoscToBurn;
 
         bool success = I_OOSC.transferFrom(ooscFrom, address(this), amountOoscToBurn);
@@ -294,6 +295,10 @@ contract OOSCEngine is ReentrancyGuard {
 
         (uint256 totalOoscMinted, uint256 collateralValueInUsd) = _getAccountInformation(user);
 
+        if (totalOoscMinted == 0) {
+            return type(uint256).max; // no debt
+        }
+
         uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
 
         // ex. 1000 ETH / 100 OOSC
@@ -304,7 +309,12 @@ contract OOSCEngine is ReentrancyGuard {
     function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 amountCollateral)
         private
     {
+        if (s_collateralDeposited[from][tokenCollateralAddress] == 0) {
+            revert OOSCEngine_NoCollateralToRedeem();
+        }
+        
         s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral;
+
 
         emit CollateralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
 
@@ -331,10 +341,16 @@ contract OOSCEngine is ReentrancyGuard {
     // PUBLIC & EXTERNAL VIEWFUNCTIONS
     //
 
-    function getTokenAmountFromUsd(address token, uint256 usdAmountInWei) public view returns (uint256) {
+    /*
+     * @notice Given a USD value, returns how many units of the token that buys at the feed price.
+     * @param token The collateral token (must have a price feed).
+     * @param usdValue18Decimals USD value in 18 decimals (e.g. 100e18 = $100).
+     * @return Token amount in token decimals (e.g. 18 for WETH) equivalent to usdValue18Decimals.
+     */
+    function getTokenAmountFromUsd(address token, uint256 usdValue18Decimals) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
-        return (usdAmountInWei * PRECISION) / (SafeCast.toUint256(price) * ADDITIONAL_FEED_PRECISION);
+        return (usdValue18Decimals * PRECISION) / (SafeCast.toUint256(price) * ADDITIONAL_FEED_PRECISION);
     }
 
     function getAccountCollateralValue(address user) public view returns (uint256 totalCollateralValueInUsd) {
