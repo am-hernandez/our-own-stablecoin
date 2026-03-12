@@ -97,6 +97,49 @@ contract OOSCEngineTest is Test {
         assertEq(collateralValue, expectedUsdValue);
     }
 
+    function test_getHealthFactor_NoDebtReturnsMax() public depositCollateral {
+        vm.startPrank(USER);
+        uint256 hf = ooscEngine.getHealthFactor();
+        vm.stopPrank();
+        assertEq(hf, type(uint256).max);
+    }
+
+    function test_getHealthFactor_HealthyPosition() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, 100 ether);
+        uint256 hf = ooscEngine.getHealthFactor();
+        vm.stopPrank();
+        assertGe(hf, 1e18); // health factor is greater than or equal to 1
+    }
+
+    function test_getHealthFactor_UnhealthyPosition() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, 8000 ether);
+        vm.stopPrank();
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(1000e8);
+
+        vm.startPrank(USER);
+        uint256 hf = ooscEngine.getHealthFactor();
+        vm.stopPrank();
+        assertLt(hf, 1e18); // health factor is less than 1
+    }
+
+    function test_getHealthFactor_QueryAnyUser() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, 100 ether);
+        vm.stopPrank();
+
+        uint256 userHf = ooscEngine.getHealthFactor(USER);
+        uint256 liquidatorHf = ooscEngine.getHealthFactor(LIQUIDATOR);
+
+        assertGe(userHf, 1e18);
+        assertEq(liquidatorHf, type(uint256).max);
+    }
+
     //
     // DEPOSIT COLLATERAL TESTS
     //
@@ -265,7 +308,7 @@ contract OOSCEngineTest is Test {
 
         (, uint256 collateralValueInUsdBefore) = ooscEngine.getAccountInformation(USER);
         uint256 usdValueRedeemed = ooscEngine.getTokenUsdValue(weth, amountToRedeem);
-    
+
         vm.startPrank(USER);
         ooscEngine.redeemCollateral(weth, amountToRedeem);
         vm.stopPrank();
@@ -304,9 +347,7 @@ contract OOSCEngineTest is Test {
         console.log("amountToRedeem", amountToRedeem);
 
         vm.startPrank(USER);
-        vm.expectRevert(
-            abi.encodeWithSelector(OOSCEngine.OOSCEngine_BreaksHealthFactor.selector, 125000000000000000)
-        );
+        vm.expectRevert(abi.encodeWithSelector(OOSCEngine.OOSCEngine_BreaksHealthFactor.selector, 125000000000000000));
         ooscEngine.redeemCollateral(weth, amountToRedeem);
         vm.stopPrank();
     }
@@ -353,9 +394,7 @@ contract OOSCEngineTest is Test {
         uint256 amountToRedeem = (AMOUNT_COLLATERAL * redeemPercent) / 100;
 
         vm.startPrank(USER);
-        vm.expectRevert(
-            abi.encodeWithSelector(OOSCEngine.OOSCEngine_BreaksHealthFactor.selector, 142857142857142857)
-        );
+        vm.expectRevert(abi.encodeWithSelector(OOSCEngine.OOSCEngine_BreaksHealthFactor.selector, 142857142857142857));
         ooscEngine.redeemCollateralForOosc(weth, amountToRedeem, 1000 ether);
         vm.stopPrank();
     }
@@ -465,9 +504,7 @@ contract OOSCEngineTest is Test {
 
         vm.startPrank(LIQUIDATOR);
         OurOwnStablecoin(oosc).approve(address(ooscEngine), debtToCover);
-        vm.expectRevert(
-            abi.encodeWithSelector(OOSCEngine.OOSCEngine_BreaksHealthFactor.selector, 714285714285714285)
-        );
+        vm.expectRevert(abi.encodeWithSelector(OOSCEngine.OOSCEngine_BreaksHealthFactor.selector, 714285714285714285));
         ooscEngine.liquidate(weth, USER, debtToCover);
         vm.stopPrank();
     }
