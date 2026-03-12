@@ -293,4 +293,53 @@ contract OOSCEngineTest is Test {
         ooscEngine.redeemCollateral(weth, amountToRedeem);
         vm.stopPrank();
     }
+
+    //
+    // REDEEM COLLATERAL FOR OOSC TESTS
+    //
+
+    function test_redeemCollateralForOosc() public {
+        uint256 mintAmount = 100 ether;
+        uint256 burnAmount = 50 ether;
+        uint256 collateralToRedeem = 5 ether;
+
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, mintAmount);
+        OurOwnStablecoin(oosc).approve(address(ooscEngine), burnAmount);
+        ooscEngine.redeemCollateralForOosc(weth, collateralToRedeem, burnAmount);
+        vm.stopPrank();
+
+        (uint256 totalOoscMinted, uint256 collateralValueInUsd) = ooscEngine.getAccountInformation(USER);
+        assertEq(totalOoscMinted, mintAmount - burnAmount);
+        assertGt(collateralValueInUsd, totalOoscMinted);
+    }
+
+    function test_revertsWhenRedeemCollateralForOosc_BurnAmountIsZero() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, 100 ether);
+
+        vm.expectRevert(OOSCEngine.OOSCEngine_MustBeMoreThanZero.selector);
+        ooscEngine.redeemCollateralForOosc(weth, 5 ether, 0);
+        vm.stopPrank();
+    }
+
+    function test_revertsWhenRedeemCollateralForOosc_BreaksHealthFactor() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, 8000 ether);
+        OurOwnStablecoin(oosc).approve(address(ooscEngine), 1000 ether);
+        vm.stopPrank();
+
+        uint256 redeemPercent = 90;
+        uint256 amountToRedeem = (AMOUNT_COLLATERAL * redeemPercent) / 100;
+
+        vm.startPrank(USER);
+        vm.expectRevert(
+            abi.encodeWithSelector(OOSCEngine.OOSCEngine_BreaksHealthFactor.selector, 142857142857142857)
+        );
+        ooscEngine.redeemCollateralForOosc(weth, amountToRedeem, 1000 ether);
+        vm.stopPrank();
+    }
 }
