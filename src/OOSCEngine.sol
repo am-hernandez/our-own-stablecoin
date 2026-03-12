@@ -401,4 +401,12 @@ contract OOSCEngine is ReentrancyGuard {
     {
         (totalOoscMinted, collateralValueInUsd) = _getAccountInformation(user);
     }
+
+    function getCollateralBalanceOfUser(address user, address token) external view returns (uint256) {
+        return s_collateralDeposited[user][token];
+    }
+
+    function getCollateralTokens() external view returns (address[] memory) {
+        return s_collateralTokens;
+    }
 }
