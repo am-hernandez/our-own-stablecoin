@@ -57,7 +57,7 @@ contract Handler is Test {
             return;
         }
 
-        timesRedeemIsCalled ++;
+        timesRedeemIsCalled++;
         console.log("timesRedeemIsCalled", timesRedeemIsCalled);
 
         vm.startPrank(depositor);
