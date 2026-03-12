@@ -81,6 +81,22 @@ contract OOSCEngineTest is Test {
         assertEq(actualWethAmount, expectedWethAmount);
     }
 
+    function test_getAccountCollateralValue_ZeroWhenNoDeposit() public view {
+        uint256 collateralValue = ooscEngine.getAccountCollateralValue(USER);
+        assertEq(collateralValue, 0);
+    }
+
+    function test_getAccountCollateralValue_ReturnsUsdValueAfterDeposit() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateral(weth, AMOUNT_COLLATERAL);
+        vm.stopPrank();
+
+        uint256 collateralValue = ooscEngine.getAccountCollateralValue(USER);
+        uint256 expectedUsdValue = ooscEngine.getTokenUsdValue(weth, AMOUNT_COLLATERAL);
+        assertEq(collateralValue, expectedUsdValue);
+    }
+
     //
     // DEPOSIT COLLATERAL TESTS
     //
