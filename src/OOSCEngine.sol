@@ -34,7 +34,7 @@ contract OOSCEngine is ReentrancyGuard {
     error OOSCEngine_MintFailed();
     error OOSCEngine_BurnAmountExceedsBalance();
     error OOSCEngine_NoCollateralToRedeem();
-    
+
     //
     // STATE VARIABLES
     //
@@ -239,8 +239,6 @@ contract OOSCEngine is ReentrancyGuard {
         _revertIfHealthFactorBroken(msg.sender);
     }
 
-    function getHealthFactor() external view {}
-
     //
     // PRIVATE & INTERNAL FUNCTIONS
     //
@@ -289,7 +287,7 @@ contract OOSCEngine is ReentrancyGuard {
      * @param user The address of the user to check the health factor of
      * @return The health factor of the user
      */
-    function _healthFactor(address user) private view returns (uint256) {
+    function _healthFactor(address user) internal view returns (uint256) {
         // total OOSC minted
         // total collateral VALUE
 
@@ -312,9 +310,8 @@ contract OOSCEngine is ReentrancyGuard {
         if (s_collateralDeposited[from][tokenCollateralAddress] == 0) {
             revert OOSCEngine_NoCollateralToRedeem();
         }
-        
-        s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral;
 
+        s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral;
 
         emit CollateralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
 
@@ -338,8 +335,23 @@ contract OOSCEngine is ReentrancyGuard {
     }
 
     //
-    // PUBLIC & EXTERNAL VIEWFUNCTIONS
+    // PUBLIC & EXTERNAL VIEW FUNCTIONS
     //
+
+    /*
+     * @notice Returns the caller's health factor (18 decimals). >= 1e18 is healthy, < 1e18 is liquidatable.
+     */
+    function getHealthFactor() external view returns (uint256) {
+        return getHealthFactor(msg.sender);
+    }
+
+    /*
+     * @notice Returns the health factor of an account (18 decimals). >= 1e18 is healthy, < 1e18 is liquidatable.
+     * @param user The account to query.
+     */
+    function getHealthFactor(address user) public view returns (uint256) {
+        return _healthFactor(user);
+    }
 
     /*
      * @notice Given a USD value, returns how many units of the token that buys at the feed price.
