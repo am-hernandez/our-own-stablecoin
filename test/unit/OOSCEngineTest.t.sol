@@ -23,6 +23,7 @@ contract OOSCEngineTest is Test {
     address weth;
 
     address public USER = makeAddr("user");
+    address public LIQUIDATOR = makeAddr("liquidator");
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
     uint256 public constant STARTING_ERC20_BALANCE = 10 ether;
 
@@ -340,6 +341,118 @@ contract OOSCEngineTest is Test {
             abi.encodeWithSelector(OOSCEngine.OOSCEngine_BreaksHealthFactor.selector, 142857142857142857)
         );
         ooscEngine.redeemCollateralForOosc(weth, amountToRedeem, 1000 ether);
+        vm.stopPrank();
+    }
+
+    //
+    // LIQUIDATE TESTS
+    //
+
+    function test_liquidate() public {
+        uint256 userMintAmount = 8000 ether;
+        uint256 debtToCover = 7000 ether;
+        uint256 liquidatorCollateral = 20 ether;
+
+        ERC20Mock(weth).mint(LIQUIDATOR, liquidatorCollateral);
+        vm.startPrank(LIQUIDATOR);
+        ERC20Mock(weth).approve(address(ooscEngine), liquidatorCollateral);
+        ooscEngine.depositCollateralAndMintOosc(weth, liquidatorCollateral, debtToCover);
+        vm.stopPrank();
+
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, userMintAmount);
+        vm.stopPrank();
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(1000e8);
+
+        vm.startPrank(LIQUIDATOR);
+        OurOwnStablecoin(oosc).approve(address(ooscEngine), debtToCover);
+        ooscEngine.liquidate(weth, USER, debtToCover);
+        vm.stopPrank();
+
+        (uint256 userDebtAfter, uint256 userCollateralValueAfter) = ooscEngine.getAccountInformation(USER);
+        assertEq(userDebtAfter, userMintAmount - debtToCover);
+        assertGt(userCollateralValueAfter, 0);
+    }
+
+    function test_revertsWhenLiquidate_DebtToCoverZero() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, 100 ether);
+        vm.stopPrank();
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(1000e8);
+
+        vm.startPrank(LIQUIDATOR);
+        vm.expectRevert(OOSCEngine.OOSCEngine_MustBeMoreThanZero.selector);
+        ooscEngine.liquidate(weth, USER, 0);
+        vm.stopPrank();
+    }
+
+    function test_revertsWhenLiquidate_HealthFactorOk() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, 100 ether);
+        vm.stopPrank();
+
+        ERC20Mock(weth).mint(LIQUIDATOR, AMOUNT_COLLATERAL);
+        vm.startPrank(LIQUIDATOR);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, 50 ether);
+        OurOwnStablecoin(oosc).approve(address(ooscEngine), 50 ether);
+        vm.expectRevert(OOSCEngine.OOSCEngine_HealthFactorOk.selector);
+        ooscEngine.liquidate(weth, USER, 50 ether);
+        vm.stopPrank();
+    }
+
+    function test_revertsWhenLiquidate_HealthFactorNotImproved() public {
+        uint256 userMintAmount = 8000 ether;
+        uint256 debtToCover = 1000 ether;
+
+        ERC20Mock(weth).mint(LIQUIDATOR, AMOUNT_COLLATERAL);
+        vm.startPrank(LIQUIDATOR);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, debtToCover);
+        vm.stopPrank();
+
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, userMintAmount);
+        vm.stopPrank();
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(1000e8);
+
+        vm.startPrank(LIQUIDATOR);
+        OurOwnStablecoin(oosc).approve(address(ooscEngine), debtToCover);
+        vm.expectRevert(OOSCEngine.OOSCEngine_HealthFactorNotImproved.selector);
+        ooscEngine.liquidate(weth, USER, debtToCover);
+        vm.stopPrank();
+    }
+
+    function test_revertsWhenLiquidate_LiquidatorHealthFactorBroken() public {
+        uint256 userMintAmount = 8000 ether;
+        uint256 debtToCover = 7000 ether;
+
+        ERC20Mock(weth).mint(LIQUIDATOR, AMOUNT_COLLATERAL);
+        vm.startPrank(LIQUIDATOR);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, debtToCover);
+        vm.stopPrank();
+
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(ooscEngine), AMOUNT_COLLATERAL);
+        ooscEngine.depositCollateralAndMintOosc(weth, AMOUNT_COLLATERAL, userMintAmount);
+        vm.stopPrank();
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(1000e8);
+
+        vm.startPrank(LIQUIDATOR);
+        OurOwnStablecoin(oosc).approve(address(ooscEngine), debtToCover);
+        vm.expectRevert(
+            abi.encodeWithSelector(OOSCEngine.OOSCEngine_BreaksHealthFactor.selector, 714285714285714285)
+        );
+        ooscEngine.liquidate(weth, USER, debtToCover);
         vm.stopPrank();
     }
 }
